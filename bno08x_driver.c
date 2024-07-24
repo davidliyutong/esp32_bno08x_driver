@@ -112,7 +112,7 @@ void BNO08x_init(BNO08x* device, BNO08x_config_t *imu_config)
     spi_device_polling_transmit(device->spi_hdl, &(device->spi_transaction)); // send data packet
 
     device->spi_task_hdl = NULL;
-    xTaskCreate(&BNO08x_spi_task_trampoline, "bno08x_spi_task", 4096, (void *)device, 8, &(device->spi_task_hdl)); // launch SPI task
+    xTaskCreate(&BNO08x_spi_task, "bno08x_spi_task", 4096, (void *)device, 8, &(device->spi_task_hdl)); // launch SPI task
 }
 
 /**
@@ -2622,25 +2622,13 @@ void BNO08x_queue_tare_command(BNO08x* device, uint8_t command, uint8_t axis, ui
 //}
 
 /**
- * @brief Static function used to launch spi task.
- *
- * Used such that spi_task() can be non-static class member.
- *
- * @return void, nothing to return
- */
-void BNO08x_spi_task_trampoline(void* arg)
-{
-    BNO08x* imu = (BNO08x*) arg; // cast argument received by xTaskCreate ("this" pointer to imu object created by constructor call)
-    BNO08x_spi_task(imu);            // launch spi task from object
-}
-
-/**
  * @brief Task responsible for SPI transactions. Executed when HINT in is asserted by BNO08x
  *
  * @return void, nothing to return
  */
-void BNO08x_spi_task(BNO08x* device)
+void BNO08x_spi_task(void *arg)
 {
+    BNO08x* device = (BNO08x*) arg; // cast argument received by xTaskCreate ("this" pointer to imu object created by constructor call)
     static uint64_t prev_time = 0;
 
     while (1)

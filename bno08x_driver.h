@@ -368,7 +368,6 @@ extern bool bno08x_isr_service_installed;
 
 // Function prototypes for ISR and task handling
 void IRAM_ATTR BNO08x_hint_handler(void* arg);
-void BNO08x_spi_task_trampoline(void* arg);
-void BNO08x_spi_task(BNO08x* device);
+void BNO08x_spi_task(void *arg);
 
 #endif
