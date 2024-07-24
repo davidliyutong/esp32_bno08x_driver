@@ -39,6 +39,7 @@ void BNO08x_init(BNO08x* device, BNO08x_config_t *imu_config)
     device->bus_config.sclk_io_num = imu_config->io_sclk; // assign sclk gpio pin
     device->bus_config.quadhd_io_num = -1;               // hold signal gpio (not used)
     device->bus_config.quadwp_io_num = -1;               // write protect signal gpio (not used)
+    device->bus_config.isr_cpu_id = ESP_INTR_CPU_AFFINITY_AUTO;
 
     // SPI slave device specific config
     device->imu_spi_config.mode = 0x3; // set mode to 3 as per BNO08x datasheet (CPHA second edge, CPOL bus high when idle)
@@ -55,7 +56,7 @@ void BNO08x_init(BNO08x* device, BNO08x_config_t *imu_config)
     device->imu_spi_config.command_bits = 0;                       // 0 command bits, not using this system
     device->imu_spi_config.spics_io_num = -1;                      // due to esp32 silicon issue, chip select cannot be used with full-duplex mode
     // driver, it must be handled via calls to gpio pins
-    device->imu_spi_config.queue_size = 5;                         // only allow for 5 queued transactions at a time
+    device->imu_spi_config.queue_size = 5;                         // only allow for 5 queued transactions at a timed
 
     // SPI non-driver-controlled GPIO config
     // configure outputs
