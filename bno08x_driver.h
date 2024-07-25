@@ -108,7 +108,7 @@ typedef enum
 /// @brief Holds data that is sent over spi.
 typedef struct bno08x_tx_packet_t
 {
-    uint8_t body[50]; ///< Body of SHTP the packet (header + body)
+    uint8_t body[30]; ///< Body of SHTP the packet (header + body)
     uint16_t length;  ///< Packet length in bytes.
 } bno08x_tx_packet_t;
 
@@ -140,9 +140,9 @@ typedef struct
     EventGroupHandle_t evt_grp_report_en;
     QueueHandle_t queue_tx_data;
     QueueHandle_t queue_rx_data;
+    QueueHandle_t queue_frs_read_data; 
     QueueHandle_t queue_reset_reason;
 
-    uint32_t meta_data[9];
     uint8_t command_sequence_number;
     spi_bus_config_t bus_config;
     spi_device_interface_config_t imu_spi_config;
@@ -327,34 +327,53 @@ float BNO08x_get_resolution(BNO08x *device, uint16_t record_ID);
 float BNO08x_get_range(BNO08x *device, uint16_t record_ID);
 uint32_t BNO08x_FRS_read_word(BNO08x *device, uint16_t record_ID, uint8_t word_number);
 bool BNO08x_FRS_read_request(BNO08x *device, uint16_t record_ID, uint16_t read_offset, uint16_t block_size);
-bool BNO08x_FRS_read_data(BNO08x *device, uint16_t record_ID, uint8_t start_location, uint8_t words_to_read);
+bool BNO08x_FRS_read_data(BNO08x *device, uint16_t record_ID, uint8_t start_location, uint8_t words_to_read, uint32_t *meta_data);
 
 // Private functions
-static bool BNO08x_wait_for_rx_done(BNO08x *device);
-static bool BNO08x_wait_for_tx_done(BNO08x *device);
-static bool BNO08x_wait_for_data(BNO08x *device);
+bool BNO08x_wait_for_rx_done(BNO08x *device);
+bool BNO08x_wait_for_tx_done(BNO08x *device);
+bool BNO08x_wait_for_data(BNO08x *device);
 
-static bool BNO08x_receive_packet(BNO08x *device);
-static void BNO08x_send_packet(BNO08x *device, bno08x_tx_packet_t *packet);
-static void BNO08x_queue_packet(BNO08x *device, uint8_t channel_number, uint8_t data_length, uint8_t *commands);
-static void BNO08x_queue_command(BNO08x *device, uint8_t command, uint8_t *commands);
-static void BNO08x_queue_feature_command(BNO08x *device, uint8_t report_ID, uint32_t time_between_reports, uint32_t specific_config);
-static void BNO08x_queue_calibrate_command(BNO08x *device, uint8_t _to_calibrate);
-static void BNO08x_queue_tare_command(BNO08x *device, uint8_t command, uint8_t axis, uint8_t rotation_vector_basis);
-static void BNO08x_queue_request_product_id_command(BNO08x *device);
+bool BNO08x_receive_packet(BNO08x *device);
+void BNO08x_send_packet(BNO08x *device, bno08x_tx_packet_t *packet);
+void BNO08x_queue_packet(BNO08x *device, uint8_t channel_number, uint8_t data_length, uint8_t *commands);
+void BNO08x_queue_command(BNO08x *device, uint8_t command, uint8_t *commands);
+void BNO08x_queue_feature_command(BNO08x *device, uint8_t report_ID, uint32_t time_between_reports, uint32_t specific_config);
+void BNO08x_queue_calibrate_command(BNO08x *device, uint8_t _to_calibrate);
+void BNO08x_queue_tare_command(BNO08x *device, uint8_t command, uint8_t axis, uint8_t rotation_vector_basis);
+void BNO08x_queue_request_product_id_command(BNO08x *device);
 
-static void BNO08x_enable_report(BNO08x *device, uint8_t report_ID, uint32_t time_between_reports, const EventBits_t report_evt_grp_bit, uint32_t specific_config);
-static void BNO08x_disable_report(BNO08x *device, uint8_t report_ID, const EventBits_t report_evt_grp_bit);
+void BNO08x_enable_report(BNO08x *device, uint8_t report_ID, uint32_t time_between_reports, const EventBits_t report_evt_grp_bit, uint32_t specific_config);
+void BNO08x_disable_report(BNO08x *device, uint8_t report_ID, const EventBits_t report_evt_grp_bit);
 uint16_t BNO08x_parse_packet(BNO08x *device, bno08x_rx_packet_t *packet);
 uint16_t BNO08x_parse_product_id_report(BNO08x *device, bno08x_rx_packet_t *packet);
+uint16_t BNO08x_parse_frs_read_response_report(BNO08x *device, bno08x_rx_packet_t *packet);
 uint16_t BNO08x_parse_input_report(BNO08x *device, bno08x_rx_packet_t *packet);
 uint16_t BNO08x_parse_command_report(BNO08x *device, bno08x_rx_packet_t *packet);
 
+// Max RX buffer space
+#define RX_DATA_LENGTH 300
+
+// Max meta-data length (from FRS reads)
+#define MAX_METADATA_LENGTH 9
+
 // Record IDs
-#define FRS_RECORDID_ACCELEROMETER 0xE302
-#define FRS_RECORDID_GYROSCOPE_CALIBRATED 0xE306
-#define FRS_RECORDID_MAGNETIC_FIELD_CALIBRATED 0xE309
-#define FRS_RECORDID_ROTATION_VECTOR 0xE30B
+#define FRS_RECORD_ID_ACCELEROMETER 0xE302
+#define FRS_RECORD_ID_GYROSCOPE_CALIBRATED 0xE306
+#define FRS_RECORD_ID_MAGNETIC_FIELD_CALIBRATED 0xE309
+#define FRS_RECORD_ID_ROTATION_VECTOR 0xE30B
+
+// Activity classifier bits
+#define ACTIVITY_CLASSIFIER_UNKNOWN_EN (1 << 0)
+#define ACTIVITY_CLASSIFIER_IN_VEHICLE_EN (1 << 1)
+#define ACTIVITY_CLASSIFIER_ON_BICYCLE_EN (1 << 2)
+#define ACTIVITY_CLASSIFIER_ON_FOOT_EN (1 << 3)
+#define ACTIVITY_CLASSIFIER_STILL_EN (1 << 4)
+#define ACTIVITY_CLASSIFIER_TILTING_EN (1 << 5)
+#define ACTIVITY_CLASSIFIER_WALKING_EN (1 << 6)
+#define ACTIVITY_CLASSIFIER_RUNNING_EN (1 << 7)
+#define ACTIVITY_CLASSIFIER_ON_STAIRS_EN (1 << 8)
+#define ACTIVITY_CLASSIFIER_ALL_EN 0x1F
 
 // Tare commands
 #define TARE_AXIS_ALL 0x07
@@ -437,8 +456,8 @@ uint16_t BNO08x_parse_command_report(BNO08x *device, bno08x_rx_packet_t *packet)
 extern bool bno08x_isr_service_installed;
 
 // Function prototypes for ISR and task handling
-static void IRAM_ATTR BNO08x_hint_handler(void *arg);
-static void BNO08x_spi_task(void *arg);
-static void BNO08x_data_proc_task(void *arg);
+void IRAM_ATTR BNO08x_hint_handler(void *arg);
+void BNO08x_spi_task(void *arg);
+void BNO08x_data_proc_task(void *arg);
 
 #endif

@@ -29,6 +29,7 @@ void BNO08x_init(BNO08x *device, BNO08x_config_t *imu_config)
     device->evt_grp_report_en = xEventGroupCreate();
     device->queue_tx_data = xQueueCreate(1, sizeof(bno08x_tx_packet_t));
     device->queue_rx_data = xQueueCreate(1, sizeof(bno08x_rx_packet_t));
+    device->queue_frs_read_data = xQueueCreate(1, RX_DATA_LENGTH * sizeof(uint8_t));
     device->queue_reset_reason = xQueueCreate(1, sizeof(uint32_t));
     device->calibration_status = 1;
 
@@ -352,14 +353,15 @@ bool BNO08x_mode_on(BNO08x *device)
     uint8_t commands[20] = {0};
 
     commands[0] = 2;
-
     BNO08x_queue_packet(device, CHANNEL_EXECUTABLE, 1, commands);
     success = BNO08x_wait_for_tx_done(device);
-    vTaskDelay(20 / portTICK_PERIOD_MS);
 
-    success = BNO08x_wait_for_rx_done(device); // receive advertisement message;
-    vTaskDelay(20 / portTICK_PERIOD_MS);
-    success = BNO08x_wait_for_rx_done(device); // receive initialize message
+    // flush any packets received
+    for (int i = 0; i < 3; i++)
+    {
+        BNO08x_wait_for_rx_done(device);
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
 
     return success;
 }
@@ -375,14 +377,15 @@ bool BNO08x_mode_sleep(BNO08x *device)
     uint8_t commands[20] = {0};
 
     commands[0] = 3;
-
     BNO08x_queue_packet(device, CHANNEL_EXECUTABLE, 1, commands);
     success = BNO08x_wait_for_tx_done(device);
 
-    vTaskDelay(20 / portTICK_PERIOD_MS);
-    success = BNO08x_wait_for_rx_done(device); // receive advertisement message;
-    vTaskDelay(20 / portTICK_PERIOD_MS);
-    success = BNO08x_wait_for_rx_done(device); // receive initialize message
+    // flush any packets received
+    for (int i = 0; i < 3; i++)
+    {
+        BNO08x_wait_for_rx_done(device);
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
 
     return success;
 }
@@ -758,10 +761,10 @@ bool BNO08x_run_full_calibration_routine(BNO08x *device)
     BNO08x_calibrate_all(device); // Turn on cal for Accel, Gyro, and Mag
 
     // Enable Game Rotation Vector output
-    BNO08x_enable_game_rotation_vector(device, 100); // Send data update every 100ms
+    BNO08x_enable_game_rotation_vector(device, 20000UL); // Send data update every 20ms
 
     // Enable Magnetic Field output
-    BNO08x_enable_magnetometer(device, 100); // Send data update every 100ms
+    BNO08x_enable_magnetometer(device, 50000UL); // Send data update every 50ms
 
     while (1)
     {
@@ -852,12 +855,12 @@ uint16_t BNO08x_parse_packet(BNO08x *device, bno08x_rx_packet_t *packet)
 
     if (packet->body[0] == SHTP_REPORT_PRODUCT_ID_RESPONSE) // check to see that product ID matches what it should
     {
-        // todo
+        return BNO08x_parse_product_id_report(device, packet);
     }
 
     if (packet->body[0] == SHTP_REPORT_FRS_READ_RESPONSE)
     {
-        // todo
+        return BNO08x_parse_frs_read_response_report(device, packet);
     }
 
     // Check to see if this packet is a sensor reporting its data to us
@@ -888,6 +891,12 @@ uint16_t BNO08x_parse_packet(BNO08x *device, bno08x_rx_packet_t *packet)
     return 0;
 }
 
+/**
+ * @brief Parses product id report and prints device info.
+ *
+ * @param packet The packet containing product id report.
+ * @return 1, always valid.
+ */
 uint16_t BNO08x_parse_product_id_report(BNO08x *device, bno08x_rx_packet_t *packet)
 {
     uint32_t reset_reason = (uint32_t)packet->body[1];
@@ -913,6 +922,18 @@ uint16_t BNO08x_parse_product_id_report(BNO08x *device, bno08x_rx_packet_t *pack
 
     xQueueSend(device->queue_reset_reason, &reset_reason, 0);
 
+    return 1;
+}
+
+/**
+ * @brief Sends packet to be parsed to meta data function call (frs_read_word()) through queue.
+ *
+ * @param packet The packet containing the frs read report.
+ * @return 1, always valid, parsing for this happens in frs_read_word()
+ */
+uint16_t BNO08x_parse_frs_read_response_report(BNO08x *device, bno08x_rx_packet_t *packet)
+{
+    xQueueSend(device->queue_frs_read_data, &packet->body, 0);
     return 1;
 }
 
@@ -2343,7 +2364,7 @@ int8_t BNO08x_get_stability_classifier(BNO08x *device)
 }
 
 /**
- * @brief Get the current activity classifier (Seee Ref. Manual 6.5.36)
+ * @brief Get the current most likely activity classifier (Seee Ref. Manual 6.5.36)
  *
  * @return The current activity:
  *         0 = unknown
@@ -2521,10 +2542,13 @@ float BNO08x_get_range(BNO08x *device, uint16_t record_ID)
  */
 uint32_t BNO08x_FRS_read_word(BNO08x *device, uint16_t record_ID, uint8_t word_number)
 {
-    if (BNO08x_FRS_read_data(device, record_ID, word_number, 1)) // start at desired word and only read one 1 word
-        return (device->meta_data[0]);
-    else
-        return 0; // FRS read failed
+    static uint32_t meta_data[9] = {0};
+    uint32_t frs_read = 0;
+
+    if (BNO08x_FRS_read_data(device, record_ID, word_number, 1, meta_data)) // start at desired word and only read one 1 word
+        frs_read = meta_data[0];
+
+    return frs_read;
 }
 
 /**
@@ -2569,58 +2593,59 @@ bool BNO08x_FRS_read_request(BNO08x *device, uint16_t record_ID, uint16_t read_o
  *
  * @return True if meta data read successfully.
  */
-bool BNO08x_FRS_read_data(BNO08x *device, uint16_t record_ID, uint8_t start_location, uint8_t words_to_read)
+bool BNO08x_FRS_read_data(BNO08x *device, uint16_t record_ID, uint8_t start_location, uint8_t words_to_read, uint32_t *meta_data)
 {
-    // todo
-
-    /*
-    uint32_t data_0 = 0;
-    uint32_t data_1 = 0;
-    uint8_t data_length = 0;
-    uint8_t FRS_status = 0;
-    uint8_t attempt_count = 0;
-    uint16_t i = 0;
+    uint8_t counter;
+    uint8_t packet_body[RX_DATA_LENGTH];
+    uint8_t data_length;
+    uint8_t frs_status;
+    uint32_t data_0;
+    uint32_t data_1;
+    uint8_t spot = 0;
 
     if (BNO08x_FRS_read_request(device, record_ID, start_location, words_to_read))
     {
-        vTaskDelay(5 / portTICK_PERIOD_MS);
-        for (attempt_count = 0; attempt_count < 10; attempt_count++)
+        while (1)
         {
-            if (BNO08x_wait_for_rx_done(device))
+            while (1)
             {
-                if (device->rx_buffer[0] != SHTP_REPORT_FRS_READ_RESPONSE)
-                    return false;
+                counter = 0;
 
-                if (((((uint16_t)device->rx_buffer[13]) << 8) | device->rx_buffer[12]) != record_ID)
-                    return false;
+                while (!BNO08x_wait_for_rx_done(device))
+                {
+                    counter++;
+
+                    if (counter > 100)
+                        return false;
+                }
+
+                if (xQueueReceive(device->queue_frs_read_data, &packet_body, HOST_INT_TIMEOUT_MS / portTICK_PERIOD_MS))
+                {
+                    if ((((uint16_t)packet_body[13] << 8) | (uint16_t)packet_body[12]) == record_ID)
+                        break;
+                }
             }
 
-            data_length = device->rx_buffer[1] >> 4;
-            FRS_status = device->rx_buffer[1] & 0x0F;
+            data_length = packet_body[1] >> 4;
+            frs_status = packet_body[1] & 0x0F;
 
-            data_0 = (uint32_t)device->rx_buffer[7] << 24 | (uint32_t)device->rx_buffer[6] << 16 | (uint32_t)device->rx_buffer[5] << 8 | (uint32_t)device->rx_buffer[4];
-            data_1 = (uint32_t)device->rx_buffer[11] << 24 | (uint32_t)device->rx_buffer[10] << 16 | (uint32_t)device->rx_buffer[9] << 8 | (uint32_t)device->rx_buffer[8];
+            data_0 = (uint32_t)packet_body[7] << 24 | (uint32_t)packet_body[6] << 16 | (uint32_t)packet_body[5] << 8 | (uint32_t)packet_body[4];
+            data_1 = (uint32_t)packet_body[11] << 24 | (uint32_t)packet_body[10] << 16 | (uint32_t)packet_body[9] << 8 | (uint32_t)packet_body[8];
 
-            // save meta data words to their respective buffer
             if (data_length > 0)
-                device->meta_data[i++] = data_0;
+                meta_data[spot++] = data_0;
 
             if (data_length > 1)
-                device->meta_data[i++] = data_1;
+                meta_data[spot++] = data_1;
 
-            if (i >= 9)
-            {
-                if (device->imu_config.debug_en)
-                    ESP_LOGW(TAG, "meta_data array overrun, returning from FRS_read_request()");
-
+            if (spot >= MAX_METADATA_LENGTH)
                 return true;
-            }
 
-            if (FRS_status == 3 || FRS_status == 6 || FRS_status == 7)
+            if (frs_status == 3 || frs_status == 6 || frs_status == 7)
                 return true;
         }
     }
-    */
+
     return false;
 }
 
@@ -2728,7 +2753,7 @@ void BNO08x_spi_task(void *arg)
         }
 
         if (xQueueReceive(device->queue_tx_data, &tx_packet, 0)) // check for queued packet to be sent, non blocking
-            BNO08x_send_packet(device, &tx_packet);                     // send packet
+            BNO08x_send_packet(device, &tx_packet);              // send packet
         else
             BNO08x_receive_packet(device); // receive packet
     }
