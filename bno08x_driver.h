@@ -46,7 +46,7 @@ typedef enum
     IMU_ACCURACY_HIGH
 } IMUAccuracy;
 
-/// @brief SPI event group bits.
+/// @brief SPI event group bits (indicates events in the sending and receiving process)
 typedef enum
 {
     EVT_GRP_SPI_RX_DONE_BIT = (1 << 0),
@@ -55,8 +55,43 @@ typedef enum
     EVT_GRP_SPI_TX_DONE_BIT = (1 << 3)
 } evt_grp_spi_bits_t;
 
-/// @brief IMU configuration settings passed into constructor
-typedef struct
+/// @brief Report enable event group bits (indicates which reports are active)
+typedef enum
+{
+    // evt_grp_report_en bits
+    EVT_GRP_RPT_ROTATION_VECTOR_BIT = (1 << 0),      ///< When set, rotation vector reports are active.
+    EVT_GRP_RPT_GAME_ROTATION_VECTOR_BIT = (1 << 1), ///< When set, game rotation vector reports are active.
+    EVT_GRP_RPT_ARVR_S_ROTATION_VECTOR_BIT =
+        (1 << 2), ///< When set, ARVR stabilized rotation vector reports are active.
+    EVT_GRP_RPT_ARVR_S_GAME_ROTATION_VECTOR_BIT =
+        (1 << 3), ///< When set, ARVR stabilized game rotation vector reports are active.
+    EVT_GRP_RPT_GYRO_ROTATION_VECTOR_BIT =
+        (1 << 4),                                     ///< When set, gyro integrator rotation vector reports are active.
+    EVT_GRP_RPT_ACCELEROMETER_BIT = (1 << 5),         ///< When set, accelerometer reports are active.
+    EVT_GRP_RPT_LINEAR_ACCELEROMETER_BIT = (1 << 6),  ///< When set, linear accelerometer reports are active.
+    EVT_GRP_RPT_GRAVITY_BIT = (1 << 7),               ///< When set, gravity reports are active.
+    EVT_GRP_RPT_GYRO_BIT = (1 << 8),                  ///< When set, gyro reports are active.
+    EVT_GRP_RPT_GYRO_UNCALIBRATED_BIT = (1 << 9),     ///< When set, uncalibrated gyro reports are active.
+    EVT_GRP_RPT_MAGNETOMETER_BIT = (1 << 10),         ///< When set, magnetometer reports are active.
+    EVT_GRP_RPT_TAP_DETECTOR_BIT = (1 << 11),         ///< When set, tap detector reports are active.
+    EVT_GRP_RPT_STEP_COUNTER_BIT = (1 << 12),         ///< When set, step counter reports are active.
+    EVT_GRP_RPT_STABILITY_CLASSIFIER_BIT = (1 << 13), ///< When set, stability classifier reports are active.
+    EVT_GRP_RPT_ACTIVITY_CLASSIFIER_BIT = (1 << 14),  ///< When set, activity classifier reports are active.
+    EVT_GRP_RPT_RAW_ACCELEROMETER_BIT = (1 << 15),    ///< When set, raw accelerometer reports are active.
+    EVT_GRP_RPT_RAW_GYRO_BIT = (1 << 16),             ///< When set, raw gyro reports are active.
+    EVT_GRP_RPT_RAW_MAGNETOMETER_BIT = (1 << 17),     ///< When set, raw magnetometer reports are active.
+
+    EVT_GRP_RPT_ALL_BITS =
+        EVT_GRP_RPT_ROTATION_VECTOR_BIT | EVT_GRP_RPT_GAME_ROTATION_VECTOR_BIT | EVT_GRP_RPT_ARVR_S_ROTATION_VECTOR_BIT |
+        EVT_GRP_RPT_ARVR_S_GAME_ROTATION_VECTOR_BIT | EVT_GRP_RPT_GYRO_ROTATION_VECTOR_BIT | EVT_GRP_RPT_ACCELEROMETER_BIT |
+        EVT_GRP_RPT_LINEAR_ACCELEROMETER_BIT | EVT_GRP_RPT_GRAVITY_BIT | EVT_GRP_RPT_GYRO_BIT | EVT_GRP_RPT_GYRO_UNCALIBRATED_BIT |
+        EVT_GRP_RPT_MAGNETOMETER_BIT | EVT_GRP_RPT_TAP_DETECTOR_BIT | EVT_GRP_RPT_STEP_COUNTER_BIT | EVT_GRP_RPT_STABILITY_CLASSIFIER_BIT |
+        EVT_GRP_RPT_ACTIVITY_CLASSIFIER_BIT | EVT_GRP_RPT_RAW_ACCELEROMETER_BIT | EVT_GRP_RPT_RAW_GYRO_BIT | EVT_GRP_RPT_RAW_MAGNETOMETER_BIT
+
+} evt_grp_report_en_bits_t;
+
+    /// @brief IMU configuration settings passed into constructor
+    typedef struct
 {
     spi_host_device_t spi_peripheral;
     gpio_num_t io_mosi;
@@ -77,6 +112,14 @@ typedef struct bno08x_tx_packet_t
     uint16_t length;  ///< Packet length in bytes.
 } bno08x_tx_packet_t;
 
+/// @brief Holds data that is received over spi.
+typedef struct bno08x_rx_packet_t
+{
+    uint8_t header[4]; ///< Header of SHTP packet.
+    uint8_t body[300]; /// Body of SHTP packet.
+    uint16_t length;   ///< Packet length in bytes.
+} bno08x_rx_packet_t;
+
 // Default IMU configuration settings for various ESP32 platforms
 #ifdef ESP32C3_IMU_CONFIG
 #define DEFAULT_IMU_CONFIG {SPI2_HOST, GPIO_NUM_4, GPIO_NUM_19, GPIO_NUM_18, GPIO_NUM_5, GPIO_NUM_6, GPIO_NUM_7, GPIO_NUM_NC, 2000000UL, false}
@@ -94,17 +137,13 @@ typedef struct
     TaskHandle_t spi_task_hdl;
     TaskHandle_t data_proc_task_hdl;
     EventGroupHandle_t evt_grp_spi;
+    EventGroupHandle_t evt_grp_report_en;
     QueueHandle_t queue_tx_data;
-    // SemaphoreHandle_t tx_semaphore;
-    // SemaphoreHandle_t int_asserted_semaphore;
+    QueueHandle_t queue_rx_data;
+    QueueHandle_t queue_reset_reason;
 
-    uint8_t rx_buffer[300];
-    uint8_t packet_header_rx[4];
-    uint8_t commands[20];
-    uint8_t sequence_number[6];
     uint32_t meta_data[9];
     uint8_t command_sequence_number;
-    uint16_t packet_length_rx;
     spi_bus_config_t bus_config;
     spi_device_interface_config_t imu_spi_config;
     spi_device_handle_t spi_hdl;
@@ -197,9 +236,6 @@ void BNO08x_save_tare(BNO08x *device);
 void BNO08x_clear_tare(BNO08x *device);
 
 bool BNO08x_data_available(BNO08x *device);
-uint16_t BNO08x_parse_input_report(BNO08x *device);
-uint16_t BNO08x_parse_command_report(BNO08x *device);
-uint16_t BNO08x_get_readings(BNO08x *device);
 
 uint32_t BNO08x_get_time_stamp(BNO08x *device);
 
@@ -280,8 +316,8 @@ uint16_t BNO08x_get_step_count(BNO08x *device);
 int8_t BNO08x_get_stability_classifier(BNO08x *device);
 uint8_t BNO08x_get_activity_classifier(BNO08x *device);
 
-void BNO08x_print_header(BNO08x *device);
-void BNO08x_print_packet(BNO08x *device);
+void BNO08x_print_header(BNO08x *device, bno08x_rx_packet_t *packet);
+void BNO08x_print_packet(BNO08x *device, bno08x_rx_packet_t *packet);
 
 // Metadata functions
 int16_t BNO08x_get_Q1(BNO08x *device, uint16_t record_ID);
@@ -296,15 +332,23 @@ bool BNO08x_FRS_read_data(BNO08x *device, uint16_t record_ID, uint8_t start_loca
 // Private functions
 static bool BNO08x_wait_for_rx_done(BNO08x *device);
 static bool BNO08x_wait_for_tx_done(BNO08x *device);
+static bool BNO08x_wait_for_data(BNO08x *device);
 
 static bool BNO08x_receive_packet(BNO08x *device);
-static void BNO08x_send_packet(BNO08x* device, bno08x_tx_packet_t *packet);
-static void BNO08x_queue_packet(BNO08x *device, uint8_t channel_number, uint8_t data_length);
-static void BNO08x_queue_command(BNO08x *device, uint8_t command);
+static void BNO08x_send_packet(BNO08x *device, bno08x_tx_packet_t *packet);
+static void BNO08x_queue_packet(BNO08x *device, uint8_t channel_number, uint8_t data_length, uint8_t *commands);
+static void BNO08x_queue_command(BNO08x *device, uint8_t command, uint8_t *commands);
 static void BNO08x_queue_feature_command(BNO08x *device, uint8_t report_ID, uint32_t time_between_reports, uint32_t specific_config);
 static void BNO08x_queue_calibrate_command(BNO08x *device, uint8_t _to_calibrate);
 static void BNO08x_queue_tare_command(BNO08x *device, uint8_t command, uint8_t axis, uint8_t rotation_vector_basis);
 static void BNO08x_queue_request_product_id_command(BNO08x *device);
+
+static void BNO08x_enable_report(BNO08x *device, uint8_t report_ID, uint32_t time_between_reports, const EventBits_t report_evt_grp_bit, uint32_t specific_config);
+static void BNO08x_disable_report(BNO08x *device, uint8_t report_ID, const EventBits_t report_evt_grp_bit);
+uint16_t BNO08x_parse_packet(BNO08x *device, bno08x_rx_packet_t *packet);
+uint16_t BNO08x_parse_product_id_report(BNO08x *device, bno08x_rx_packet_t *packet);
+uint16_t BNO08x_parse_input_report(BNO08x *device, bno08x_rx_packet_t *packet);
+uint16_t BNO08x_parse_command_report(BNO08x *device, bno08x_rx_packet_t *packet);
 
 // Record IDs
 #define FRS_RECORDID_ACCELEROMETER 0xE302
@@ -320,8 +364,8 @@ static void BNO08x_queue_request_product_id_command(BNO08x *device);
 #define TARE_GAME_ROTATION_VECTOR 1
 #define TARE_GEOMAGNETIC_ROTATION_VECTOR 2
 #define TARE_GYRO_INTEGRATED_ROTATION_VECTOR 3
-#define TARE_AR_VR_STABILIZED_ROTATION_VECTOR 4
-#define TARE_AR_VR_STABILIZED_GAME_ROTATION_VECTOR 5
+#define TARE_ARVR_STABILIZED_ROTATION_VECTOR 4
+#define TARE_ARVR_STABILIZED_GAME_ROTATION_VECTOR 5
 
 #define ROTATION_VECTOR_Q1 14
 #define ROTATION_VECTOR_ACCURACY_Q1 12
@@ -362,25 +406,25 @@ static void BNO08x_queue_request_product_id_command(BNO08x *device);
 #define SHTP_REPORT_SET_FEATURE_COMMAND 0xFD
 
 // Sensor report IDs
-#define SENSOR_REPORTID_ACCELEROMETER 0x01
-#define SENSOR_REPORTID_GYROSCOPE 0x02
-#define SENSOR_REPORTID_MAGNETIC_FIELD 0x03
-#define SENSOR_REPORTID_LINEAR_ACCELERATION 0x04
-#define SENSOR_REPORTID_ROTATION_VECTOR 0x05
-#define SENSOR_REPORTID_GRAVITY 0x06
-#define SENSOR_REPORTID_UNCALIBRATED_GYRO 0x07
-#define SENSOR_REPORTID_GAME_ROTATION_VECTOR 0x08
-#define SENSOR_REPORTID_GEOMAGNETIC_ROTATION_VECTOR 0x09
-#define SENSOR_REPORTID_GYRO_INTEGRATED_ROTATION_VECTOR 0x2A
-#define SENSOR_REPORTID_TAP_DETECTOR 0x10
-#define SENSOR_REPORTID_STEP_COUNTER 0x11
-#define SENSOR_REPORTID_STABILITY_CLASSIFIER 0x13
-#define SENSOR_REPORTID_RAW_ACCELEROMETER 0x14
-#define SENSOR_REPORTID_RAW_GYROSCOPE 0x15
-#define SENSOR_REPORTID_RAW_MAGNETOMETER 0x16
-#define SENSOR_REPORTID_PERSONAL_ACTIVITY_CLASSIFIER 0x1E
-#define SENSOR_REPORTID_AR_VR_STABILIZED_ROTATION_VECTOR 0x28
-#define SENSOR_REPORTID_AR_VR_STABILIZED_GAME_ROTATION_VECTOR 0x29
+#define SENSOR_REPORT_ID_ACCELEROMETER 0x01
+#define SENSOR_REPORT_ID_GYROSCOPE 0x02
+#define SENSOR_REPORT_ID_MAGNETIC_FIELD 0x03
+#define SENSOR_REPORT_ID_LINEAR_ACCELERATION 0x04
+#define SENSOR_REPORT_ID_ROTATION_VECTOR 0x05
+#define SENSOR_REPORT_ID_GRAVITY 0x06
+#define SENSOR_REPORT_ID_UNCALIBRATED_GYRO 0x07
+#define SENSOR_REPORT_ID_GAME_ROTATION_VECTOR 0x08
+#define SENSOR_REPORT_ID_GEOMAGNETIC_ROTATION_VECTOR 0x09
+#define SENSOR_REPORT_ID_GYRO_INTEGRATED_ROTATION_VECTOR 0x2A
+#define SENSOR_REPORT_ID_TAP_DETECTOR 0x10
+#define SENSOR_REPORT_ID_STEP_COUNTER 0x11
+#define SENSOR_REPORT_ID_STABILITY_CLASSIFIER 0x13
+#define SENSOR_REPORT_ID_RAW_ACCELEROMETER 0x14
+#define SENSOR_REPORT_ID_RAW_GYROSCOPE 0x15
+#define SENSOR_REPORT_ID_RAW_MAGNETOMETER 0x16
+#define SENSOR_REPORT_ID_PERSONAL_ACTIVITY_CLASSIFIER 0x1E
+#define SENSOR_REPORT_ID_ARVR_STABILIZED_ROTATION_VECTOR 0x28
+#define SENSOR_REPORT_ID_ARVR_STABILIZED_GAME_ROTATION_VECTOR 0x29
 
 // Tare commands
 #define TARE_NOW 0
