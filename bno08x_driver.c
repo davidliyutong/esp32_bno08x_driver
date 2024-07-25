@@ -120,9 +120,19 @@ void BNO08x_init(BNO08x *device, BNO08x_config_t *imu_config)
  */
 bool BNO08x_initialize(BNO08x *device)
 {
+    device->cb_list = (bno08x_cb_list_t *)malloc(sizeof(bno08x_cb_list_t));
+
+    if (device->cb_list == NULL)
+    {
+        ESP_LOGE(TAG, "BNO08x_initialize failed, failed to allocate memory for cb_list.");
+    }
+
+    device->cb_list->callbacks = NULL;
+    device->cb_list->length = 0;
+
     device->spi_task_hdl = NULL;
     device->data_proc_task_hdl = NULL;
-    xTaskCreate(&BNO08x_spi_task, "bno08x_spi_task", 8192, (void *)device, 8, &(device->spi_task_hdl));                   // launch SPI task
+    xTaskCreate(&BNO08x_spi_task, "bno08x_spi_task", 4096, (void *)device, 8, &(device->spi_task_hdl));                                                    // launch SPI task
     xTaskCreate(&BNO08x_data_proc_task, "bno08x_data_proc_task", CONFIG_ESP32_BNO08X_DATA_PROC_TASK_SZ, (void *)device, 7, &(device->data_proc_task_hdl)); // launch data proc task
 
     if (!BNO08x_hard_reset(device))
@@ -157,9 +167,9 @@ bool BNO08x_wait_for_rx_done(BNO08x *device)
     // wait until an interrupt has been asserted and data received or timeout has occured
     if (xEventGroupWaitBits(device->evt_grp_spi, EVT_GRP_SPI_RX_DONE_BIT, pdTRUE, pdTRUE, HOST_INT_TIMEOUT_MS / portTICK_PERIOD_MS))
     {
-        #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+#ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
         ESP_LOGI(TAG, "int asserted");
-        #endif
+#endif
 
         success = true;
     }
@@ -187,9 +197,9 @@ bool BNO08x_wait_for_tx_done(BNO08x *device)
 
     if (xEventGroupWaitBits(device->evt_grp_spi, EVT_GRP_SPI_TX_DONE_BIT, pdTRUE, pdTRUE, HOST_INT_TIMEOUT_MS / portTICK_PERIOD_MS))
     {
-        #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+#ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
         ESP_LOGI(TAG, "Packet sent successfully.");
-        #endif
+#endif
 
         return true;
     }
@@ -226,9 +236,9 @@ bool BNO08x_wait_for_data(BNO08x *device)
             // only return true if packet is valid
             if (xEventGroupGetBits(device->evt_grp_spi) & EVT_GRP_SPI_RX_VALID_PACKET_BIT)
             {
-                #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+#ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
                 ESP_LOGI(TAG, "Valid packet received.");
-                #endif
+#endif
 
                 success = true;
             }
@@ -417,9 +427,9 @@ bool BNO08x_receive_packet(BNO08x *device)
     packet.length = (((uint16_t)packet.header[1]) << 8) | ((uint16_t)packet.header[0]);
     packet.length &= ~(1 << 15); // Clear the MSbit
 
-    #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+#ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
     ESP_LOGW(TAG, "packet rx length: %d", packet.length);
-    #endif
+#endif
 
     if (packet.length == 0)
         return false;
@@ -850,13 +860,34 @@ bool BNO08x_data_available(BNO08x *device)
     return BNO08x_wait_for_data(device);
 }
 
+bool BNO08x_register_cb(BNO08x *device, bno08x_cb_fxn_t cb_fxn)
+{
+    bno08x_cb_fxn_t *callbacks_appended;
+    if (cb_fxn != NULL)
+    {
+        callbacks_appended = (bno08x_cb_fxn_t *)realloc(device->cb_list->callbacks, (device->cb_list->length + 1) * sizeof(bno08x_cb_fxn_t));
+
+        if(callbacks_appended != NULL)
+        {
+            callbacks_appended[device->cb_list->length] = cb_fxn;
+            
+            device->cb_list->callbacks = callbacks_appended;
+            device->cb_list->length++;
+
+            return true;
+        }
+    }
+
+    return false; 
+}
+
 uint16_t BNO08x_parse_packet(BNO08x *device, bno08x_rx_packet_t *packet)
 {
 
-    #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+#ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
     ESP_LOGE(
         TAG, "SHTP Header RX'd: 0x%X 0x%X 0x%X 0x%X", packet->header[0], packet->header[1], packet->header[2], packet->header[3]);
-    #endif
+#endif
 
     if (packet->body[0] == SHTP_REPORT_PRODUCT_ID_RESPONSE) // check to see that product ID matches what it should
     {
@@ -871,26 +902,26 @@ uint16_t BNO08x_parse_packet(BNO08x *device, bno08x_rx_packet_t *packet)
     // Check to see if this packet is a sensor reporting its data to us
     if (packet->header[2] == CHANNEL_REPORTS && packet->body[0] == SHTP_REPORT_BASE_TIMESTAMP)
     {
-        #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+#ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
         ESP_LOGI(TAG, "RX'd packet, channel report");
-        #endif
+#endif
 
         return BNO08x_parse_input_report(device, packet); // This will update the rawAccelX, etc variables depending on which feature
         // report is found
     }
     else if (packet->header[2] == CHANNEL_CONTROL)
     {
-        #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+#ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
         ESP_LOGI(TAG, "RX'd packet, channel control");
-        #endif
+#endif
 
         return BNO08x_parse_command_report(device, packet); // This will update responses to commands, calibrationStatus, etc.
     }
     else if (packet->header[2] == CHANNEL_GYRO)
     {
-        #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+#ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
         ESP_LOGI(TAG, "Rx packet, channel gyro");
-        #endif
+#endif
 
         return BNO08x_parse_input_report(device, packet); // This will update the rawAccelX, etc variables depending on which feature
         // report is found
@@ -2739,10 +2770,10 @@ void BNO08x_queue_tare_command(BNO08x *device, uint8_t command, uint8_t axis, ui
  */
 void BNO08x_spi_task(void *arg)
 {
-    #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+#ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
     static uint64_t prev_time = 0;
     static uint64_t current_time = 0;
-    #endif
+#endif
     BNO08x *device = (BNO08x *)arg;
     bno08x_tx_packet_t tx_packet;
 
@@ -2755,11 +2786,11 @@ void BNO08x_spi_task(void *arg)
 
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY); // block until notified by ISR (hint_handler)
 
-        #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+#ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
         current_time = esp_timer_get_time();
         ESP_LOGI(TAG, "HINT asserted, time since last assertion: %llu", (current_time - prev_time));
         prev_time = current_time;
-        #endif
+#endif
 
         if (xQueueReceive(device->queue_tx_data, &tx_packet, 0)) // check for queued packet to be sent, non blocking
             BNO08x_send_packet(device, &tx_packet);              // send packet
@@ -2779,6 +2810,15 @@ void BNO08x_data_proc_task(void *arg)
         {
             if (BNO08x_parse_packet(device, &packet) != 0) // check if packet is valid
             {
+                //execute callbacks
+                for(int i = 0; i < device->cb_list->length; i++)
+                {
+                    if(device->cb_list->callbacks[i] != NULL)
+                    {
+                        device->cb_list->callbacks[i]((void *)device); //call the callback and pass it the imu
+                    }
+                }
+
                 xEventGroupSetBits(device->evt_grp_spi, EVT_GRP_SPI_RX_VALID_PACKET_BIT);
             }
             else

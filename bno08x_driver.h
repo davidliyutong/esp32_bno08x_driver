@@ -90,8 +90,8 @@ typedef enum
 
 } evt_grp_report_en_bits_t;
 
-    /// @brief IMU configuration settings passed into constructor
-    typedef struct
+/// @brief IMU configuration settings passed into constructor
+typedef struct
 {
     spi_host_device_t spi_peripheral;
     gpio_num_t io_mosi;
@@ -120,23 +120,34 @@ typedef struct bno08x_rx_packet_t
     uint16_t length;   ///< Packet length in bytes.
 } bno08x_rx_packet_t;
 
+/// @brief Data callback function prototype, void my_fxn(void *arg), where arg is a pointer to the BNO08x structure.
+typedef void (*bno08x_cb_fxn_t)(void *);
+
+/// @brief Holds any registered callbacks to be executed
+typedef struct bno08x_cb_list_t
+{
+    bno08x_cb_fxn_t *callbacks; ///< dynamically allocated storage for callback functions
+    uint16_t length; ///< length of the list (total amount of registered callback functions)
+} bno08x_cb_list_t;
+
 // Default IMU configuration settings modifiable via menuconfig
 #define DEFAULT_IMU_CONFIG {CONFIG_ESP32_BNO08x_SPI_HOST, CONFIG_ESP32_BNO08X_GPIO_DI, CONFIG_ESP32_BNO08X_GPIO_SDA, CONFIG_ESP32_BNO08X_GPIO_SCL, CONFIG_ESP32_BNO08X_GPIO_CS, CONFIG_ESP32_BNO08X_GPIO_HINT, CONFIG_ESP32_BNO08X_GPIO_RST, CONFIG_ESP32_BNO08X_GPIO_WAKE, CONFIG_ESP32_BNO08X_SCL_SPEED_HZ, CONFIG_ESP32_BNO08X_SPI_INTR_CPU_AFFINITY}
-
 
 typedef struct
 {
 
     BNO08x_config_t imu_config;
-
+    
     TaskHandle_t spi_task_hdl;
     TaskHandle_t data_proc_task_hdl;
     EventGroupHandle_t evt_grp_spi;
     EventGroupHandle_t evt_grp_report_en;
     QueueHandle_t queue_tx_data;
     QueueHandle_t queue_rx_data;
-    QueueHandle_t queue_frs_read_data; 
+    QueueHandle_t queue_frs_read_data;
     QueueHandle_t queue_reset_reason;
+
+    bno08x_cb_list_t *cb_list;
 
     uint8_t command_sequence_number;
     spi_bus_config_t bus_config;
@@ -231,6 +242,7 @@ void BNO08x_save_tare(BNO08x *device);
 void BNO08x_clear_tare(BNO08x *device);
 
 bool BNO08x_data_available(BNO08x *device);
+bool BNO08x_register_cb(BNO08x *device, bno08x_cb_fxn_t cb_fxn);
 
 uint32_t BNO08x_get_time_stamp(BNO08x *device);
 
@@ -358,7 +370,7 @@ uint16_t BNO08x_parse_command_report(BNO08x *device, bno08x_rx_packet_t *packet)
 #define FRS_RECORD_ID_MAGNETIC_FIELD_CALIBRATED 0xE309
 #define FRS_RECORD_ID_ROTATION_VECTOR 0xE30B
 
-// Activity classifier bits
+// Activity classifier enable bits
 #define ACTIVITY_CLASSIFIER_UNKNOWN_EN (1 << 0)
 #define ACTIVITY_CLASSIFIER_IN_VEHICLE_EN (1 << 1)
 #define ACTIVITY_CLASSIFIER_ON_BICYCLE_EN (1 << 2)
