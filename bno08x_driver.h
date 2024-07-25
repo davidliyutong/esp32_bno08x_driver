@@ -10,6 +10,7 @@
 #ifndef _BNO08X_DRIVER_H
 #define _BNO08X_DRIVER_H
 
+//esp-idf includes
 #include <driver/gpio.h>
 #include <driver/spi_common.h>
 #include <driver/spi_master.h>
@@ -22,6 +23,7 @@
 #include <freertos/queue.h>
 #include <rom/ets_sys.h>
 
+//std library includes
 #include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
