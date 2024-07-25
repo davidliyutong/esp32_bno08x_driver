@@ -39,15 +39,15 @@ void BNO08x_init(BNO08x *device, BNO08x_config_t *imu_config)
     device->bus_config.sclk_io_num = imu_config->io_sclk; // assign sclk gpio pin
     device->bus_config.quadhd_io_num = -1;                // hold signal gpio (not used)
     device->bus_config.quadwp_io_num = -1;                // write protect signal gpio (not used)
-    device->bus_config.isr_cpu_id = ESP_INTR_CPU_AFFINITY_AUTO;
+    device->bus_config.isr_cpu_id = (esp_intr_cpu_affinity_t)device->imu_config.cpu_spi_intr_affinity;
 
     // SPI slave device specific config
     device->imu_spi_config.mode = 0x3; // set mode to 3 as per BNO08x datasheet (CPHA second edge, CPOL bus high when idle)
 
-    if (imu_config->sclk_speed > 3000000) // max sclk speed of 3MHz for BNO08x
+    if (imu_config->sclk_speed > 3000000UL) // max sclk speed of 3MHz for BNO08x
     {
-        ESP_LOGE(TAG, "Max clock speed exceeded, %d overwritten with 3000000Hz", imu_config->sclk_speed);
-        imu_config->sclk_speed = 3000000;
+        ESP_LOGE(TAG, "Max clock speed exceeded, %ld overwritten with 3000000Hz", imu_config->sclk_speed);
+        imu_config->sclk_speed = 3000000UL;
     }
 
     // FIXME: device->imu_spi_config.clock_source = SPI_CLK_SRC_DEFAULT;
@@ -123,7 +123,7 @@ bool BNO08x_initialize(BNO08x *device)
     device->spi_task_hdl = NULL;
     device->data_proc_task_hdl = NULL;
     xTaskCreate(&BNO08x_spi_task, "bno08x_spi_task", 8192, (void *)device, 8, &(device->spi_task_hdl));                   // launch SPI task
-    xTaskCreate(&BNO08x_data_proc_task, "bno08x_data_proc_task", 4096, (void *)device, 7, &(device->data_proc_task_hdl)); // launch data proc task
+    xTaskCreate(&BNO08x_data_proc_task, "bno08x_data_proc_task", CONFIG_ESP32_BNO08X_DATA_PROC_TASK_SZ, (void *)device, 7, &(device->data_proc_task_hdl)); // launch data proc task
 
     if (!BNO08x_hard_reset(device))
         return false;
@@ -157,8 +157,9 @@ bool BNO08x_wait_for_rx_done(BNO08x *device)
     // wait until an interrupt has been asserted and data received or timeout has occured
     if (xEventGroupWaitBits(device->evt_grp_spi, EVT_GRP_SPI_RX_DONE_BIT, pdTRUE, pdTRUE, HOST_INT_TIMEOUT_MS / portTICK_PERIOD_MS))
     {
-        if (device->imu_config.debug_en)
-            ESP_LOGI(TAG, "int asserted");
+        #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+        ESP_LOGI(TAG, "int asserted");
+        #endif
 
         success = true;
     }
@@ -186,8 +187,9 @@ bool BNO08x_wait_for_tx_done(BNO08x *device)
 
     if (xEventGroupWaitBits(device->evt_grp_spi, EVT_GRP_SPI_TX_DONE_BIT, pdTRUE, pdTRUE, HOST_INT_TIMEOUT_MS / portTICK_PERIOD_MS))
     {
-        if (device->imu_config.debug_en)
-            ESP_LOGI(TAG, "Packet sent successfully.");
+        #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+        ESP_LOGI(TAG, "Packet sent successfully.");
+        #endif
 
         return true;
     }
@@ -224,8 +226,9 @@ bool BNO08x_wait_for_data(BNO08x *device)
             // only return true if packet is valid
             if (xEventGroupGetBits(device->evt_grp_spi) & EVT_GRP_SPI_RX_VALID_PACKET_BIT)
             {
-                if (device->imu_config.debug_en)
-                    ESP_LOGI(TAG, "Valid packet received.");
+                #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+                ESP_LOGI(TAG, "Valid packet received.");
+                #endif
 
                 success = true;
             }
@@ -414,8 +417,9 @@ bool BNO08x_receive_packet(BNO08x *device)
     packet.length = (((uint16_t)packet.header[1]) << 8) | ((uint16_t)packet.header[0]);
     packet.length &= ~(1 << 15); // Clear the MSbit
 
-    if (device->imu_config.debug_en)
-        ESP_LOGW(TAG, "packet rx length: %d", packet.length);
+    #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+    ESP_LOGW(TAG, "packet rx length: %d", packet.length);
+    #endif
 
     if (packet.length == 0)
         return false;
@@ -849,9 +853,10 @@ bool BNO08x_data_available(BNO08x *device)
 uint16_t BNO08x_parse_packet(BNO08x *device, bno08x_rx_packet_t *packet)
 {
 
-    if (device->imu_config.debug_en)
-        ESP_LOGE(
-            TAG, "SHTP Header RX'd: 0x%X 0x%X 0x%X 0x%X", packet->header[0], packet->header[1], packet->header[2], packet->header[3]);
+    #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+    ESP_LOGE(
+        TAG, "SHTP Header RX'd: 0x%X 0x%X 0x%X 0x%X", packet->header[0], packet->header[1], packet->header[2], packet->header[3]);
+    #endif
 
     if (packet->body[0] == SHTP_REPORT_PRODUCT_ID_RESPONSE) // check to see that product ID matches what it should
     {
@@ -866,23 +871,26 @@ uint16_t BNO08x_parse_packet(BNO08x *device, bno08x_rx_packet_t *packet)
     // Check to see if this packet is a sensor reporting its data to us
     if (packet->header[2] == CHANNEL_REPORTS && packet->body[0] == SHTP_REPORT_BASE_TIMESTAMP)
     {
-        if (device->imu_config.debug_en)
-            ESP_LOGI(TAG, "RX'd packet, channel report");
+        #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+        ESP_LOGI(TAG, "RX'd packet, channel report");
+        #endif
 
         return BNO08x_parse_input_report(device, packet); // This will update the rawAccelX, etc variables depending on which feature
         // report is found
     }
     else if (packet->header[2] == CHANNEL_CONTROL)
     {
-        if (device->imu_config.debug_en)
-            ESP_LOGI(TAG, "RX'd packet, channel control");
+        #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+        ESP_LOGI(TAG, "RX'd packet, channel control");
+        #endif
 
         return BNO08x_parse_command_report(device, packet); // This will update responses to commands, calibrationStatus, etc.
     }
     else if (packet->header[2] == CHANNEL_GYRO)
     {
-        if (device->imu_config.debug_en)
-            ESP_LOGI(TAG, "Rx packet, channel gyro");
+        #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+        ESP_LOGI(TAG, "Rx packet, channel gyro");
+        #endif
 
         return BNO08x_parse_input_report(device, packet); // This will update the rawAccelX, etc variables depending on which feature
         // report is found
@@ -2731,8 +2739,10 @@ void BNO08x_queue_tare_command(BNO08x *device, uint8_t command, uint8_t axis, ui
  */
 void BNO08x_spi_task(void *arg)
 {
+    #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
     static uint64_t prev_time = 0;
     static uint64_t current_time = 0;
+    #endif
     BNO08x *device = (BNO08x *)arg;
     bno08x_tx_packet_t tx_packet;
 
@@ -2745,12 +2755,11 @@ void BNO08x_spi_task(void *arg)
 
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY); // block until notified by ISR (hint_handler)
 
-        if (device->imu_config.debug_en)
-        {
-            current_time = esp_timer_get_time();
-            ESP_LOGI(TAG, "HINT asserted, time since last assertion: %llu", (current_time - prev_time));
-            prev_time = current_time;
-        }
+        #ifdef CONFIG_ESP32_BNO08x_DEBUG_STATEMENTS
+        current_time = esp_timer_get_time();
+        ESP_LOGI(TAG, "HINT asserted, time since last assertion: %llu", (current_time - prev_time));
+        prev_time = current_time;
+        #endif
 
         if (xQueueReceive(device->queue_tx_data, &tx_packet, 0)) // check for queued packet to be sent, non blocking
             BNO08x_send_packet(device, &tx_packet);              // send packet

@@ -101,8 +101,8 @@ typedef enum
     gpio_num_t io_int;
     gpio_num_t io_rst;
     gpio_num_t io_wake;
-    int sclk_speed;
-    bool debug_en;
+    uint32_t sclk_speed;
+    uint8_t cpu_spi_intr_affinity;
 } BNO08x_config_t;
 
 /// @brief Holds data that is sent over spi.
@@ -120,14 +120,9 @@ typedef struct bno08x_rx_packet_t
     uint16_t length;   ///< Packet length in bytes.
 } bno08x_rx_packet_t;
 
-// Default IMU configuration settings for various ESP32 platforms
-#ifdef ESP32C3_IMU_CONFIG
-#define DEFAULT_IMU_CONFIG {SPI2_HOST, GPIO_NUM_4, GPIO_NUM_19, GPIO_NUM_18, GPIO_NUM_5, GPIO_NUM_6, GPIO_NUM_7, GPIO_NUM_NC, 2000000UL, false}
-#elif defined(ESP32C6_IMU_CONFIG)
-#define DEFAULT_IMU_CONFIG {SPI2_HOST, GPIO_NUM_22, GPIO_NUM_21, GPIO_NUM_23, GPIO_NUM_6, GPIO_NUM_4, GPIO_NUM_5, GPIO_NUM_NC, 2000000UL, false}
-#else
-#define DEFAULT_IMU_CONFIG {SPI3_HOST, GPIO_NUM_23, GPIO_NUM_19, GPIO_NUM_18, GPIO_NUM_33, GPIO_NUM_26, GPIO_NUM_32, GPIO_NUM_NC, 2000000UL, false}
-#endif
+// Default IMU configuration settings modifiable via menuconfig
+#define DEFAULT_IMU_CONFIG {CONFIG_ESP32_BNO08x_SPI_HOST, CONFIG_ESP32_BNO08X_GPIO_DI, CONFIG_ESP32_BNO08X_GPIO_SDA, CONFIG_ESP32_BNO08X_GPIO_SCL, CONFIG_ESP32_BNO08X_GPIO_CS, CONFIG_ESP32_BNO08X_GPIO_HINT, CONFIG_ESP32_BNO08X_GPIO_RST, CONFIG_ESP32_BNO08X_GPIO_WAKE, CONFIG_ESP32_BNO08X_SCL_SPEED_HZ, CONFIG_ESP32_BNO08X_SPI_INTR_CPU_AFFINITY}
+
 
 typedef struct
 {
