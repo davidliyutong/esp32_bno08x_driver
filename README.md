@@ -68,3 +68,12 @@ void app_main(void)
 
 ```
 
+## add
+
+CMakeLists.txt
+
+```c
+idf_component_register(SRCS "main.c"
+                    INCLUDE_DIRS ".")
+```
+
