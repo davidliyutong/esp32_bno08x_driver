@@ -57,7 +57,7 @@ void BNO08x_init(BNO08x* device, BNO08x_config_t *imu_config)
     // driver, it must be handled via calls to gpio pins
     device->imu_spi_config.queue_size = 5;                         // only allow for 5 queued transactions at a time
     device->bus_config.data5_io_num = -1;                          // octal mode not used
-     device->bus_config.isr_cpu_id = 0;
+    device->bus_config.isr_cpu_id = 0;
     // SPI non-driver-controlled GPIO config
     // configure outputs
     gpio_config_t outputs_config;
