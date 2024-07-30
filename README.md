@@ -2,6 +2,7 @@
 
 This project is inspired by [myles-parfeniuk/esp32_BNO08x](https://github.com/myles-parfeniuk/esp32_BNO08x), a C++ BNO08x driver.
 
+
 # Examples
 
 Reading data via polling with `BNO08x_data_available()`:

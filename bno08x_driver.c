@@ -56,8 +56,9 @@ void BNO08x_init(BNO08x *device, BNO08x_config_t *imu_config)
     device->imu_spi_config.command_bits = 0;                        // 0 command bits, not using this system
     device->imu_spi_config.spics_io_num = -1;                       // due to esp32 silicon issue, chip select cannot be used with full-duplex mode
     // driver, it must be handled via calls to gpio pins
-    device->imu_spi_config.queue_size = 5; // only allow for 5 queued transactions at a timed
+    device->imu_spi_config.queue_size = 5;                          // only allow for 5 queued transactions at a timed
     device->imu_spi_config.clock_source = SPI_CLK_SRC_DEFAULT;
+    // device->bus_config.data5_io_num = -1;                           // octal mode not used
     // SPI non-driver-controlled GPIO config
     // configure outputs
     gpio_config_t outputs_config;
