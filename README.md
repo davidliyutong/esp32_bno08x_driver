@@ -2,78 +2,100 @@
 
 This project is inspired by [myles-parfeniuk/esp32_BNO08x](https://github.com/myles-parfeniuk/esp32_BNO08x), a C++ BNO08x driver.
 
-Example
 
-```c
+# Examples
+
+Reading data via polling with `BNO08x_data_available()`:
+```cpp
 #include <stdio.h>
-#include <driver/gpio.h>
-#include <driver/spi_common.h>
-#include "driver/spi_master.h"
-#include <esp_log.h>
-
-#include <esp_rom_gpio.h>
-#include <esp_timer.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/semphr.h>
-#include <freertos/task.h>
-#include <rom/ets_sys.h>
 #include "bno08x_driver.h"
-#include <inttypes.h>
-#include <math.h>
-#include <string.h>
-
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "driver/gpio.h"
-#include "esp_log.h"
-#include "sdkconfig.h"
-
-static const char *TAG = "example";
 
 void app_main(void)
 {
-    BNO08x device;
-    //BNO08x_config_t imu_config = DEFAULT_IMU_CONFIG;
-    BNO08x_config_t imu_config={
-    .spi_peripheral = SPI3_HOST,
-    .io_mosi = GPIO_NUM_13, //assign pin
-    .io_miso = GPIO_NUM_11, //assign pin
-    .io_sclk = GPIO_NUM_12,
-    .io_cs = GPIO_NUM_10, //assign pin
-    .io_int = GPIO_NUM_9, //assign pin
-    .io_rst = GPIO_NUM_8, //assign pin
-    .io_wake = GPIO_NUM_14, //assign pin
-    .sclk_speed = 200000 //assign pin
-    };
-    //imu_config.debug_en=1;
-    //BNO08x imu(imu_config);  //pass config to BNO08x constructor
-    
-    BNO08x_init(&device,&imu_config);
-    BNO08x_initialize(&device);
-    BNO08x_enable_game_rotation_vector(&device,100000);
-    BNO08x_enable_gyro(&device,150000);
+    BNO08x imu;                               // imu object handle
+    BNO08x_config_t cfg = DEFAULT_IMU_CONFIG; // default IMU config modifiable via idf.py menuconfig esp32_BNO08x
+
+    // initialize SPI peripheral and gpio
+    BNO08x_init(&imu, &cfg);
+    // initialize BNO08x
+    BNO08x_initialize(&imu);
+
+    // enable reports for any data we want to receive
+    BNO08x_enable_game_rotation_vector(&imu, 100000UL); // 100,000us == 100ms report interval
+    BNO08x_enable_gyro(&imu, 150000UL);                 // 150,000us == 150ms report interval
 
     while (1)
     {
-        if (BNO08x_data_available(&device))
+        //blocks until a valid packet is received or HOST_INT_TIMEOUT_MS occurs
+        if (BNO08x_data_available(&imu))
         {
-            ESP_LOGW("Main", "Velocity: x: %.3f y: %.3f z: %.3f", BNO08x_get_gyro_calibrated_velocity_X(&device), BNO08x_get_gyro_calibrated_velocity_Y(&device), BNO08x_get_gyro_calibrated_velocity_Z(&device));
-            ESP_LOGI("Main", "Euler Angle: x (roll): %.3f y (pitch): %.3f z (yaw): %.3f", BNO08x_get_roll_deg(&device), BNO08x_get_pitch_deg(&device), BNO08x_get_yaw_deg(&device));
-        }
-        
-    }
-    
+            float x, y, z = 0;
 
+            // angular velocity (Rad/s)
+            x = BNO08x_get_gyro_calibrated_velocity_X(&imu);
+            y = BNO08x_get_gyro_calibrated_velocity_Y(&imu);
+            z = BNO08x_get_gyro_calibrated_velocity_Z(&imu);
+            ESP_LOGW("IMU_cb", "Angular Velocity: x: %.3f y: %.3f z: %.3f", x, y, z);
+
+            // absolute heading (degrees)
+            x = BNO08x_get_roll_deg(&imu);
+            y = BNO08x_get_pitch_deg(&imu);
+            z = BNO08x_get_yaw_deg(&imu);
+            ESP_LOGI("IMU_cb", "Euler Angle: x (roll): %.3f y (pitch): %.3f z (yaw): %.3f", x, y, z);
+        }
+    }
 }
 
 ```
 
-## add
+Reading data with an automatically invoked callback using `BNO08x_register_cb()`:
+```cpp
+#include <stdio.h>
+#include "bno08x_driver.h"
 
-CMakeLists.txt
+//imu data callback function, invoked whenever new data is arrived
+void imu_data_cb(void *arg);
 
-```c
-idf_component_register(SRCS "main.c"
-                    INCLUDE_DIRS ".")
+void app_main(void)
+{
+    BNO08x imu;                               // imu object handle
+    BNO08x_config_t cfg = DEFAULT_IMU_CONFIG; // default IMU config modifiable via idf.py menuconfig esp32_BNO08x
+
+    // initialize SPI peripheral and gpio
+    BNO08x_init(&imu, &cfg);
+    // initialize BNO08x
+    BNO08x_initialize(&imu);
+
+    // register a callback to be executed when new data is available
+    BNO08x_register_cb(&imu, imu_data_cb);
+
+    // enable reports for any data we want to receive
+    BNO08x_enable_game_rotation_vector(&imu, 100000UL); // 100,000us == 100ms report interval
+    BNO08x_enable_gyro(&imu, 150000UL);                 // 150,000us == 150ms report interval
+
+    while (1)
+    {
+        // delay here is irrelevant, we just don't want cpu watchdog to trip
+        vTaskDelay(10000 / portTICK_PERIOD_MS);
+    }
+}
+
+void imu_data_cb(void *arg)
+{
+    BNO08x *imu = (BNO08x *)arg; //void pointer should always be casted to BNO08x struct pointer
+    float x, y, z = 0;
+
+    //angular velocity (Rad/s)
+    x = BNO08x_get_gyro_calibrated_velocity_X(imu);
+    y = BNO08x_get_gyro_calibrated_velocity_Y(imu);
+    z = BNO08x_get_gyro_calibrated_velocity_Z(imu);
+    ESP_LOGW("IMU_cb", "Angular Velocity: x: %.3f y: %.3f z: %.3f", x, y, z);
+
+    //absolute heading (degrees)
+    x = BNO08x_get_roll_deg(imu);
+    y = BNO08x_get_pitch_deg(imu);
+    z = BNO08x_get_yaw_deg(imu);
+    ESP_LOGI("IMU_cb", "Euler Angle: x (roll): %.3f y (pitch): %.3f z (yaw): %.3f", x, y, z);
+}
+
 ```
-
